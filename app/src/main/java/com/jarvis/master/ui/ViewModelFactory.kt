@@ -13,7 +13,7 @@ import com.jarvis.master.data.settings.SettingsRepository
 /**
  * Фабрика ViewModel-ов, снабжающая их репозиториями.
  */
-class AppViewModelFactory(context: Context) : ViewModelProvider.Factory {
+class ViewModelFactory(context: Context) : ViewModelProvider.Factory {
 
     private val appContext = context.applicationContext
     private val repository: RepairRepository = RepairRepository.getInstance(AppDatabase.getInstance(appContext))

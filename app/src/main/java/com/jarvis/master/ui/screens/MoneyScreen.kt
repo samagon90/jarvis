@@ -40,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
@@ -159,7 +160,7 @@ private fun DailyBarChart(daily: List<DailyAggregate>) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height((if (max == 0.0) 0 else (value / max) * 100).dp)
+                        .height((if (max == 0.0) 0.0 else (value / max) * 100.0).dp)
                         .background(Color(0xFF1565C0), RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
                 )
                 Text(day.take(3), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

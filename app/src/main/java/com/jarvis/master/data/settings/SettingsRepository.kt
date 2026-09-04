@@ -8,7 +8,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -47,7 +47,7 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun update(transform: (Settings) -> Settings) {
-        val current = settings.foldSettings()
+        val current = context.dataStore.data.first().toSettings()
         val updated = transform(current)
         context.dataStore.edit { p ->
             p[Keys.SHOP_NAME] = updated.shopName
@@ -59,6 +59,12 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    private suspend fun kotlinx.coroutines.flow.Flow<Settings>.foldSettings(): Settings =
-        kotlinx.coroutines.flow.firstOrNull() ?: Settings()
+    private fun Preferences.toSettings(): Settings = Settings(
+        shopName = this[Keys.SHOP_NAME] ?: "Моя мастерская",
+        shopAddress = this[Keys.SHOP_ADDRESS] ?: "",
+        shopPhone = this[Keys.SHOP_PHONE] ?: "",
+        warrantyDays = this[Keys.WARRANTY_DAYS] ?: 30,
+        currency = this[Keys.CURRENCY] ?: "₽",
+        themeMode = this[Keys.THEME_MODE] ?: 0
+    )
 }

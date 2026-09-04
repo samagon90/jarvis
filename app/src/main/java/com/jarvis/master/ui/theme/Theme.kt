@@ -5,35 +5,37 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
+
+private val ColorWhite = Color.White
+private val ColorGreen = Color(0xFF81C784)
+private val ColorRed = Color(0xFFEF9A9A)
 
 private val LightColors = lightColorScheme(
     primary = BluePrimary,
-    onPrimary = androidx.compose.ui.graphics.Color.White,
+    onPrimary = ColorWhite,
     primaryContainer = BlueLight,
-    onPrimaryContainer = androidx.compose.ui.graphics.Color.White,
+    onPrimaryContainer = ColorWhite,
     secondary = CyanAccent,
-    onSecondary = androidx.compose.ui.graphics.Color.White,
+    onSecondary = ColorWhite,
     tertiary = Green,
-    background = androidx.compose.ui.graphics.Color(0xFFF6F8FB),
-    surface = androidx.compose.ui.graphics.Color.White,
+    background = Color(0xFFF6F8FB),
+    surface = ColorWhite,
     error = Red
 )
 
 private val DarkColors = darkColorScheme(
     primary = BlueLight,
-    onPrimary = androidx.compose.ui.graphics.Color(0xFF002E5B),
+    onPrimary = Color(0xFF002E5B),
     primaryContainer = BlueDark,
-    onPrimaryContainer = androidx.compose.ui.graphics.Color.White,
+    onPrimaryContainer = ColorWhite,
     secondary = CyanAccent,
-    onSecondary = androidx.compose.ui.graphics.Color(0xFF00363D),
+    onSecondary = Color(0xFF00363D),
     tertiary = ColorGreen,
-    background = androidx.compose.ui.graphics.Color(0xFF121417),
-    surface = androidx.compose.ui.graphics.Color(0xFF1B1E22),
+    background = Color(0xFF121417),
+    surface = Color(0xFF1B1E22),
     error = ColorRed
 )
-
-private val ColorGreen = androidx.compose.ui.graphics.Color(0xFF81C784)
-private val ColorRed = androidx.compose.ui.graphics.Color(0xFFEF9A9A)
 
 /**
  * Тема приложения.
