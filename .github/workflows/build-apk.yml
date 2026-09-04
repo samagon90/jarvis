@@ -1,0 +1,27 @@
+name: Build APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v3
+        with: { gradle-version: '8.9' }
+      - name: Install SDK
+        run: |
+          S="/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager"
+          [ -f "$S" ] || S="$(command -v sdkmanager)"
+          yes | "$S" --licenses >/dev/null 2>&1 || true
+          "$S" --install "platforms;android-35" "build-tools;34.0.0"
+      - name: Build debug APK
+        run: gradle --no-daemon :app:assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-master-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
