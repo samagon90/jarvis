@@ -32,11 +32,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.jarvis.master.ui.DashboardViewModel
+import com.jarvis.master.ui.ViewModelFactory
 import com.jarvis.master.ui.components.SectionTitle
 import com.jarvis.master.ui.components.StatCard
 import com.jarvis.master.ui.theme.Amber
@@ -49,7 +51,9 @@ import com.jarvis.master.util.Formatters
 @Composable
 fun DashboardScreen(
     navController: NavController,
-    viewModel: DashboardViewModel = viewModel()
+    viewModel: DashboardViewModel = viewModel(
+        factory = ViewModelFactory(LocalContext.current.applicationContext)
+    )
 ) {
     val stats by viewModel.stats.collectAsState()
 
