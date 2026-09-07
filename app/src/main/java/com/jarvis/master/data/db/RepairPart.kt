@@ -3,8 +3,10 @@ package com.jarvis.master.data.db
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
+import kotlinx.serialization.Serializable
 
 /** Связь «ремонт ↔ запчасть»: сколько единиц конкретной запчасти ушло в заказ. */
+@Serializable
 @Entity(
     tableName = "repair_parts",
     primaryKeys = ["repairId", "partId"],
