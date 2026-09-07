@@ -12,9 +12,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -36,6 +40,7 @@ import com.jarvis.master.ui.screens.PartEditScreen
 import com.jarvis.master.ui.screens.ClientDetailScreen
 import com.jarvis.master.ui.screens.SettingsScreen
 import com.jarvis.master.ui.theme.JarvisTheme
+import com.jarvis.master.data.SyncBus
 
 private data class BottomItem(
     val route: String,
@@ -60,8 +65,17 @@ fun JarvisRoot(themeMode: Int = 0) {
         val backStack by navController.currentBackStackEntryAsState()
         val currentDest = backStack?.destination
         val showBottomBar = currentDest?.route in topLevelRoutes
+        val snackbarHostState = remember { SnackbarHostState() }
+
+        // Показываем сообщения об ошибках сети/облака поверх любого экрана.
+        LaunchedEffect(snackbarHostState) {
+            SyncBus.notices.collect { message ->
+                snackbarHostState.showSnackbar(message)
+            }
+        }
 
         Scaffold(
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 if (showBottomBar) {
                     NavigationBar {

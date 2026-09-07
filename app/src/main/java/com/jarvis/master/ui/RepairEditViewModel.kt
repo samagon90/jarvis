@@ -85,6 +85,8 @@ class RepairEditViewModel(
                     )
                 }
             }
+            // Нового клиента не удалось сохранить в облако — ремонт не создаём.
+            if (f.clientName.isNotBlank() && cid == 0L) return@launch
             val repair = Repair(
                 id = repairId,
                 clientId = cid,

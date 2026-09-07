@@ -11,5 +11,6 @@ class JarvisApp : Application() {
     override fun onCreate() {
         super.onCreate()
         repository = RepairRepository.getInstance(this)
+        repository.startAutoSync()
     }
 }

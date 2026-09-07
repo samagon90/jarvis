@@ -192,8 +192,11 @@ fun RepairEditScreen(
             Button(
                 onClick = {
                     viewModel.save { id ->
-                        navController.navigate("repair_detail?repairId=$id") {
-                            popUpTo("repairs")
+                        // id == 0 — облако недоступно, ошибка уже показана Snackbar'ом.
+                        if (id != 0L) {
+                            navController.navigate("repair_detail?repairId=$id") {
+                                popUpTo("repairs")
+                            }
                         }
                     }
                 },

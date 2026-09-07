@@ -2,6 +2,7 @@ package com.jarvis.master.data
 
 import android.content.Context
 import android.util.Log
+import com.jarvis.master.data.cloud.SupabaseCloud
 import com.jarvis.master.data.db.AppDatabase
 import com.jarvis.master.data.db.Client
 import com.jarvis.master.data.db.DailyAggregate
@@ -14,9 +15,14 @@ import com.jarvis.master.data.db.RepairPhotoDao
 import com.jarvis.master.data.db.RepairStatus
 import com.jarvis.master.data.db.Transaction
 import com.jarvis.master.data.db.TransactionType
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Calendar
@@ -24,11 +30,14 @@ import java.util.Calendar
 /**
  * Единая точка доступа к данным мастерской.
  *
- * Данные хранятся в **локальной базе на телефоне** (Room) — это гарантирует, что
- * ремонты и клиенты всегда сохраняются, даже без интернета и облака.
+ * **Облако (Supabase) — единый источник данных.** Ремонты и клиенты пишутся в облако,
+ * а локальная база Room служит только быстрым кэшем для мгновенного чтения и офлайн-просмотра.
+ * Кэш периодически (и после каждого запуска) обновляется из облака, поэтому ремонт,
+ * добавленный на одном телефоне, появляется на втором.
  *
- * (Облачная синхронизация в отдельной разработке и подключается поверх этой
- * локальной базы, не мешая ей.)
+ * Запчасти, финансы и фото пока хранятся локально (переносятся в облако на следующем этапе).
+ * Создание/изменение ремонтов и клиентов требует интернета; при его отсутствии операция
+ * не выполняется и пользователь получает сообщение об ошибке.
  */
 class RepairRepository private constructor(context: Context) {
 
@@ -40,15 +49,133 @@ class RepairRepository private constructor(context: Context) {
     private val clientDao = db.clientDao()
     private val photoDao: RepairPhotoDao = db.repairPhotoDao()
 
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Запускает фоновое обновление кэша из облака каждые N секунд. */
+    fun startAutoSync() {
+        appScope.launch {
+            // Один раз переносим уже существующие локальные ремонты/клиентов в облако,
+            // чтобы переход на единую базу не потерял прежние данные.
+            firstRunPushToCloud()
+            while (true) {
+                try { refreshCloud() } catch (e: Exception) { /* тихо на фоне */ }
+                delay(AUTO_SYNC_MS)
+            }
+        }
+    }
+
+    /**
+     * Одноразовый перенос прежних локальных ремонтов и клиентов в облако (с перепривязкой
+     * clientId на новые серверные id). Выполняется только если ещё не выполнен.
+     */
+    private suspend fun firstRunPushToCloud() {
+        val prefs = appContext.getSharedPreferences(SYNC_PREFS, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(KEY_CLOUD_INITIALIZED, false)) return
+        try {
+            val oldToNewClientId = HashMap<Long, Long>()
+            clientDao.observeAll().first().forEach { c ->
+                if (c.id != 0L) {
+                    val created = SupabaseCloud.createClient(c)
+                    oldToNewClientId[c.id] = created.id
+                }
+            }
+            repairDao.observeAll().first().forEach { r ->
+                if (r.id != 0L) {
+                    val newClientId = r.clientId?.let { oldToNewClientId[it] } ?: r.clientId
+                    val toPush = if (newClientId == r.clientId) r else r.copy(clientId = newClientId)
+                    SupabaseCloud.createRepair(toPush)
+                }
+            }
+            // Локальный кэш приводим в соответствие с облаком (серверные id).
+            refreshCloud()
+            prefs.edit().putBoolean(KEY_CLOUD_INITIALIZED, true).apply()
+        } catch (e: Exception) {
+            Log.w("RepairRepository", "firstRunPushToCloud: ${e.message}")
+        }
+    }
+
+    /**
+     * Обновляет локальный кэш ремонтов и клиентов из облака (diff-слияние по id).
+     */
+    suspend fun refreshCloud() {
+        val remoteClients = SupabaseCloud.fetchClients()
+        val remoteRepairs = SupabaseCloud.fetchRepairs()
+        withContext(Dispatchers.IO) {
+            diffClients(remoteClients)
+            diffRepairs(remoteRepairs, remoteClients.map { it.id }.toSet())
+        }
+    }
+
+    private suspend fun diffClients(remote: List<Client>) {
+        val current = clientDao.observeAll().first()
+        val curById = current.associateBy { it.id }
+        for (rc in remote) {
+            val cur = curById[rc.id]
+            when {
+                cur == null -> clientDao.insert(rc)
+                cur != rc -> clientDao.update(rc)
+            }
+        }
+        val remoteIds = remote.map { it.id }.toSet()
+        current.filter { it.id !in remoteIds }.forEach { clientDao.delete(it) }
+    }
+
+    private suspend fun diffRepairs(remote: List<Repair>, remoteClientIds: Set<Long>) {
+        val current = repairDao.observeAll().first()
+        val curById = current.associateBy { it.id }
+        for (raw in remote) {
+            // Если клиент удалён и в облаке ремонт остался со ссылкой на него — снимаем ссылку,
+            // чтобы не нарушить локальный внешний ключ.
+            val rr = if (raw.clientId != null && raw.clientId !in remoteClientIds)
+                raw.copy(clientId = null) else raw
+            val cur = curById[rr.id]
+            when {
+                cur == null -> repairDao.insert(rr)
+                cur != rr -> repairDao.update(rr)
+            }
+        }
+        val remoteIds = remote.map { it.id }.toSet()
+        current.filter { it.id !in remoteIds }.forEach { repairDao.delete(it) }
+    }
+
+    /** Выполняет облачную операцию; при ошибке сообщает пользователю и возвращает default. */
+    private suspend fun <T> safeCloud(default: T, message: String, block: suspend () -> T): T =
+        try {
+            block()
+        } catch (e: Exception) {
+            Log.w("RepairRepository", "$message: ${e.message}")
+            SyncBus.notify(message)
+            default
+        }
+
     // ============================= Клиенты =============================
 
     fun observeClients(): Flow<List<Client>> = clientDao.observeAll()
     fun observeClient(id: Long): Flow<Client?> = clientDao.observeById(id)
 
-    suspend fun saveClient(client: Client): Long =
-        if (client.id == 0L) clientDao.insert(client) else { clientDao.update(client); client.id }
+    /**
+     * Создаёт/изменяет клиента В ОБЛАКЕ и кэширует результат локально.
+     * Возвращает id из облака (0 — если не удалось, пользователь уже уведомлён).
+     */
+    suspend fun saveClient(client: Client): Long = safeCloud(0L, CLOUD_SAVE_CLIENT_MSG) {
+        if (client.id == 0L) {
+            val created = SupabaseCloud.createClient(client)
+            clientDao.insert(created)
+            created.id
+        } else {
+            val updated = SupabaseCloud.updateClient(client)
+            clientDao.update(updated)
+            updated.id
+        }
+    }
 
-    suspend fun deleteClient(client: Client) = clientDao.delete(client)
+    /** Удаляет клиента в облаке и локально. */
+    suspend fun deleteClient(client: Client) {
+        safeCloud(Unit, CLOUD_DELETE_CLIENT_MSG) {
+            SupabaseCloud.deleteClient(client.id)
+            clientDao.delete(client)
+        }
+    }
 
     // ============================= Запчасти =============================
 
@@ -90,17 +217,43 @@ class RepairRepository private constructor(context: Context) {
     fun observeRepairsByClient(clientId: Long): Flow<List<Repair>> = repairDao.observeByClient(clientId)
     fun observeReadyOverdue(now: Long): Flow<List<Repair>> = repairDao.observeReadyOverdue(now)
 
-    suspend fun saveRepair(repair: Repair): Long =
-        if (repair.id == 0L) repairDao.insert(repair) else { repairDao.update(repair); repair.id }
-
-    suspend fun deleteRepair(repair: Repair) = repairDao.delete(repair)
-
-    suspend fun markReady(repair: Repair) {
-        repairDao.update(
-            repair.copy(status = RepairStatus.READY.name, readyDate = System.currentTimeMillis())
-        )
+    /**
+     * Создаёт/изменяет ремонт В ОБЛАКЕ и кэширует результат локально.
+     * Возвращает id из облака (0 — если не удалось, пользователь уже уведомлён).
+     */
+    suspend fun saveRepair(repair: Repair): Long = safeCloud(0L, CLOUD_SAVE_REPAIR_MSG) {
+        if (repair.id == 0L) {
+            val created = SupabaseCloud.createRepair(repair)
+            repairDao.insert(created)
+            created.id
+        } else {
+            val updated = SupabaseCloud.updateRepair(repair)
+            repairDao.update(updated)
+            updated.id
+        }
     }
 
+    /** Удаляет ремонт в облаке и локально. */
+    suspend fun deleteRepair(repair: Repair) {
+        safeCloud(Unit, CLOUD_DELETE_REPAIR_MSG) {
+            SupabaseCloud.deleteRepair(repair.id)
+            repairDao.delete(repair)
+        }
+    }
+
+    /** Помечает ремонт готовым в облаке и локально. */
+    suspend fun markReady(repair: Repair) {
+        val updated = repair.copy(
+            status = RepairStatus.READY.name,
+            readyDate = System.currentTimeMillis()
+        )
+        safeCloud(Unit, CLOUD_SAVE_REPAIR_MSG) {
+            SupabaseCloud.updateRepair(updated)
+            repairDao.update(updated)
+        }
+    }
+
+    /** Выдаёт ремонт: статус и оплата в облаке, проводка по деньгам — локально. */
     suspend fun issueRepair(repair: Repair, received: Double) {
         val receivedSum = received.coerceIn(0.0, repair.price)
         val updated = repair.copy(
@@ -108,17 +261,20 @@ class RepairRepository private constructor(context: Context) {
             issuedDate = System.currentTimeMillis(),
             receivedPayment = receivedSum
         )
-        repairDao.update(updated)
-        transactionDao.insert(
-            Transaction(
-                type = TransactionType.INCOME.name,
-                category = "Ремонт",
-                amount = receivedSum,
-                date = System.currentTimeMillis(),
-                repairId = repair.id,
-                description = "Оплата ремонта: ${repair.deviceName}"
+        safeCloud(Unit, CLOUD_SAVE_REPAIR_MSG) {
+            SupabaseCloud.updateRepair(updated)
+            repairDao.update(updated)
+            transactionDao.insert(
+                Transaction(
+                    type = TransactionType.INCOME.name,
+                    category = "Ремонт",
+                    amount = receivedSum,
+                    date = System.currentTimeMillis(),
+                    repairId = repair.id,
+                    description = "Оплата ремонта: ${repair.deviceName}"
+                )
             )
-        )
+        }
     }
 
     // ============================= Фото =============================
@@ -218,6 +374,16 @@ class RepairRepository private constructor(context: Context) {
     }
 
     companion object {
+        private const val AUTO_SYNC_MS = 10_000L
+
+        private const val SYNC_PREFS = "jarvis_sync"
+        private const val KEY_CLOUD_INITIALIZED = "cloud_initialized"
+
+        private const val CLOUD_SAVE_CLIENT_MSG = "Не удалось сохранить клиента — нет связи с облаком"
+        private const val CLOUD_DELETE_CLIENT_MSG = "Не удалось удалить клиента — нет связи с облаком"
+        private const val CLOUD_SAVE_REPAIR_MSG = "Не удалось сохранить ремонт — нет связи с облаком"
+        private const val CLOUD_DELETE_REPAIR_MSG = "Не удалось удалить ремонт — нет связи с облаком"
+
         @Volatile
         private var INSTANCE: RepairRepository? = null
 
