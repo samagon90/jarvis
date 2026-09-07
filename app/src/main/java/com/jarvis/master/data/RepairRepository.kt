@@ -142,6 +142,8 @@ class RepairRepository private constructor(context: Context) {
     private suspend fun <T> safeCloud(default: T, message: String, block: suspend () -> T): T =
         try {
             block()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e // настоящую отмену корутины не показываем как «нет связи» и не глотаем
         } catch (e: Exception) {
             Log.w("RepairRepository", "$message: ${e.message}")
             SyncBus.notify("$message (${cloudReason(e)})")
