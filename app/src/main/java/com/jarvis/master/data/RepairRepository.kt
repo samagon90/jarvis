@@ -336,34 +336,40 @@ class RepairRepository private constructor(context: Context) {
     }
 
     private suspend fun refreshClients() {
-        _clients.value = fetch<Client>(SupabaseConfig.TABLE_CLIENTS).sortedBy { it.name.lowercase() }
+        _clients.value = loadList { CloudHttp.select(SupabaseConfig.TABLE_CLIENTS) }
+            .let { _json.decodeFromString<List<Client>>(it) }
+            .sortedBy { it.name.lowercase() }
     }
 
     private suspend fun refreshParts() {
-        _parts.value = fetch<Part>(SupabaseConfig.TABLE_PARTS)
+        _parts.value = loadList { CloudHttp.select(SupabaseConfig.TABLE_PARTS) }
+            .let { _json.decodeFromString<List<Part>>(it) }
     }
 
     private suspend fun refreshRepairs() {
-        _repairs.value = fetch<Repair>(SupabaseConfig.TABLE_REPAIRS)
+        _repairs.value = loadList { CloudHttp.select(SupabaseConfig.TABLE_REPAIRS) }
+            .let { _json.decodeFromString<List<Repair>>(it) }
             .sortedByDescending { it.receivedDate }
     }
 
     private suspend fun refreshRepairParts() {
-        _repairParts.value = fetch<RepairPart>(SupabaseConfig.TABLE_REPAIR_PARTS)
+        _repairParts.value = loadList { CloudHttp.select(SupabaseConfig.TABLE_REPAIR_PARTS) }
+            .let { _json.decodeFromString<List<RepairPart>>(it) }
     }
 
     private suspend fun refreshTransactions() {
-        _transactions.value = fetch<Transaction>(SupabaseConfig.TABLE_TRANSACTIONS)
+        _transactions.value = loadList { CloudHttp.select(SupabaseConfig.TABLE_TRANSACTIONS) }
+            .let { _json.decodeFromString<List<Transaction>>(it) }
             .sortedByDescending { it.date }
     }
 
-    private suspend fun <reified T> fetch(table: String): List<T> =
+    /** Выполняет блокирующий сетевой запрос в IO-потоке, при ошибке возвращает "[]". */
+    private suspend fun loadList(block: () -> String): String =
         try {
-            val text = CloudHttp.select(table)
-            decodeList<T>(text)
+            withContext(Dispatchers.IO) { block() }
         } catch (e: Exception) {
-            Log.w(tag, "fetch $table: ${e.message}")
-            emptyList()
+            Log.w(tag, "loadList: ${e.message}")
+            "[]"
         }
 
     private fun JsonObject.dropId(): JsonObject {
