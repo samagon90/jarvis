@@ -184,44 +184,35 @@ class RepairRepository private constructor(context: Context) {
         val dayStart = startOfDay(now)
         val todayEnd = now + 24 * 3600_000L
         val weekStart = startOfDay(now - 6L * 24 * 3600_000L)
+        val active = setOf(
+            RepairStatus.NEW, RepairStatus.DIAGNOSED,
+            RepairStatus.IN_WORK, RepairStatus.AWAITING_PART
+        )
 
+        // Типизированный combine (до 5 потоков разных типов); счётчики считаем
+        // из полного списка ремонтов — отдельные count-потоки не нужны.
         return combine(
-            repairDao.countAll(),
-            repairDao.countInProgress(),
-            repairDao.countReady(),
             partDao.observeLowStock(),
             transactionDao.incomeBetween(dayStart, todayEnd),
             transactionDao.incomeBetween(weekStart, now),
             transactionDao.expenseBetween(weekStart, now),
             repairDao.observeAll()
-        ) { a: Array<Any> ->
-            val all = a[0] as Int
-            val inProgress = a[1] as Int
-            val ready = a[2] as Int
-            @Suppress("UNCHECKED_CAST")
-            val lowParts = a[3] as List<Part>
-            val todayIncome = a[4] as Double
-            val weekIncome = a[5] as Double
-            val weekExpense = a[6] as Double
-            @Suppress("UNCHECKED_CAST")
-            val repairs = a[7] as List<Repair>
-            val readyOverdue = repairs.filter {
-                it.statusEnum == RepairStatus.READY && (it.readyDate ?: 0) <= now
-            }
-            val totalDebt = repairs.filter { it.statusEnum != RepairStatus.CANCELLED }
-                .sumOf { it.debt }
+        ) { lowParts, todayIncome, weekIncome, weekExpense, repairs ->
             DashboardStats(
-                totalRepairs = all,
-                inProgress = inProgress,
-                ready = ready,
+                totalRepairs = repairs.size,
+                inProgress = repairs.count { it.statusEnum in active },
+                ready = repairs.count { it.statusEnum == RepairStatus.READY },
                 lowStockCount = lowParts.size,
                 lowStockParts = lowParts,
                 todayIncome = todayIncome,
                 weekIncome = weekIncome,
                 weekExpense = weekExpense,
                 weekProfit = weekIncome - weekExpense,
-                readyOverdue = readyOverdue,
-                totalDebt = totalDebt
+                readyOverdue = repairs.filter {
+                    it.statusEnum == RepairStatus.READY && (it.readyDate ?: 0L) <= now
+                },
+                totalDebt = repairs.filter { it.statusEnum != RepairStatus.CANCELLED }
+                    .sumOf { it.debt }
             )
         }
     }
