@@ -7,7 +7,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.jarvis.master.data.RepairRepository
-import com.jarvis.master.data.db.AppDatabase
 import com.jarvis.master.data.settings.SettingsRepository
 
 /**
@@ -16,7 +15,7 @@ import com.jarvis.master.data.settings.SettingsRepository
 class ViewModelFactory(context: Context) : ViewModelProvider.Factory {
 
     private val appContext = context.applicationContext
-    private val repository: RepairRepository = RepairRepository.getInstance(AppDatabase.getInstance(appContext))
+    private val repository: RepairRepository = RepairRepository.getInstance(appContext)
     private val settingsRepository: SettingsRepository = SettingsRepository(appContext)
 
     override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
