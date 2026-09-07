@@ -151,8 +151,10 @@ class RepairRepository private constructor(context: Context) {
     /** Короткая техническая причина ошибки, чтобы пользователь мог её переслать. */
     private fun cloudReason(e: Exception): String {
         val m = e.message ?: ""
+        // CloudHttp бросает: "HTTP <код> для <method> <endpoint>: <текст ответа сервера>"
         val code = Regex("HTTP (\\d{3})").find(m)?.groupValues?.get(1)
-        return if (code != null) "код $code" else m.take(160)
+        val body = m.substringAfter(": ", "").trim()
+        return if (code != null && body.isNotBlank()) "код $code · $body" else m.take(200)
     }
 
     // ============================= Клиенты =============================
