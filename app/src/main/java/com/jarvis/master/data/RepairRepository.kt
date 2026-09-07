@@ -9,6 +9,7 @@ import com.jarvis.master.data.db.DailyAggregate
 import com.jarvis.master.data.db.Part
 import com.jarvis.master.data.db.Repair
 import com.jarvis.master.data.db.RepairPart
+import com.jarvis.master.data.db.RepairPhoto
 import com.jarvis.master.data.db.RepairStatus
 import com.jarvis.master.data.db.Transaction
 import com.jarvis.master.data.db.TransactionType
@@ -47,6 +48,7 @@ class RepairRepository private constructor(context: Context) {
     private val _repairParts = MutableStateFlow<List<RepairPart>>(emptyList())
     private val _parts = MutableStateFlow<List<Part>>(emptyList())
     private val _transactions = MutableStateFlow<List<Transaction>>(emptyList())
+    private val _photos = MutableStateFlow<List<RepairPhoto>>(emptyList())
 
     init {
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
@@ -56,6 +58,34 @@ class RepairRepository private constructor(context: Context) {
             }
         }
     }
+
+    fun observePhotosForRepair(repairId: Long): Flow<List<RepairPhoto>> =
+        _photos.map { list -> list.filter { it.repairId == repairId }.sortedByDescending { it.createdAt } }
+
+    /**
+     * Загружает фото в облачное хранилище Supabase и записывает запись о нём
+     * в таблицу repair_photos, привязанную к ремонту.
+     */
+    suspend fun addPhotoToRepair(repairId: Long, bytes: ByteArray, mime: String, ext: String) =
+        withContext(Dispatchers.IO) {
+            try {
+                val path = "${repairId}_${System.currentTimeMillis()}.$ext"
+                CloudHttp.upload(SupabaseConfig.BUCKET, path, bytes, mime)
+                val photo = RepairPhoto(
+                    repairId = repairId,
+                    url = CloudHttp.publicUrl(SupabaseConfig.BUCKET, path),
+                    caption = "",
+                    createdAt = System.currentTimeMillis()
+                )
+                CloudHttp.insert(
+                    SupabaseConfig.TABLE_PHOTOS,
+                    _json.encodeToJsonElement(photo).jsonObject.dropId().toString()
+                )
+                refreshPhotos()
+            } catch (e: Exception) {
+                Log.w(tag, "addPhoto: ${e.message}")
+            }
+        }
 
     // ============================= Чтение =============================
 
@@ -333,6 +363,12 @@ class RepairRepository private constructor(context: Context) {
         refreshRepairs()
         refreshRepairParts()
         refreshTransactions()
+        refreshPhotos()
+    }
+
+    private suspend fun refreshPhotos() {
+        _photos.value = loadList { CloudHttp.select(SupabaseConfig.TABLE_PHOTOS) }
+            .let { _json.decodeFromString<List<RepairPhoto>>(it) }
     }
 
     private suspend fun refreshClients() {
