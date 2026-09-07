@@ -144,9 +144,16 @@ class RepairRepository private constructor(context: Context) {
             block()
         } catch (e: Exception) {
             Log.w("RepairRepository", "$message: ${e.message}")
-            SyncBus.notify(message)
+            SyncBus.notify("$message (${cloudReason(e)})")
             default
         }
+
+    /** Короткая техническая причина ошибки, чтобы пользователь мог её переслать. */
+    private fun cloudReason(e: Exception): String {
+        val m = e.message ?: ""
+        val code = Regex("HTTP (\\d{3})").find(m)?.groupValues?.get(1)
+        return if (code != null) "код $code" else m.take(160)
+    }
 
     // ============================= Клиенты =============================
 
