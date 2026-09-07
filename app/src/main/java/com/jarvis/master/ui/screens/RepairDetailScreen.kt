@@ -54,6 +54,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import com.jarvis.master.data.db.RepairPhoto
+import java.io.File
 import com.jarvis.master.data.db.RepairStatus
 import com.jarvis.master.ui.RepairDetailViewModel
 import com.jarvis.master.ui.ViewModelFactory
@@ -225,15 +226,16 @@ private fun PhotoSection(photos: List<RepairPhoto>, onAdd: () -> Unit) {
     OutlinedButton(onClick = onAdd) { Text("+ Добавить фото") }
     if (photos.isEmpty()) {
         Text(
-            "Фото хранятся в облаке и видны на обоих телефонах.",
+            "Фото хранятся на телефоне и привязаны к ремонту.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     } else {
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(photos) { photo ->
+                val file = remember(photo.url) { File(photo.url) }
                 AsyncImage(
-                    model = photo.url,
+                    model = file,
                     contentDescription = "Фото ремонта",
                     modifier = Modifier
                         .width(110.dp)

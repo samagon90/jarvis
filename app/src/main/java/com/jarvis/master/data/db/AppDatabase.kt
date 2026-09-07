@@ -11,9 +11,10 @@ import androidx.room.RoomDatabase
         Part::class,
         RepairPart::class,
         Transaction::class,
-        Client::class
+        Client::class,
+        RepairPhoto::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -22,6 +23,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun partDao(): PartDao
     abstract fun transactionDao(): TransactionDao
     abstract fun clientDao(): ClientDao
+    abstract fun repairPhotoDao(): RepairPhotoDao
 
     companion object {
         @Volatile
