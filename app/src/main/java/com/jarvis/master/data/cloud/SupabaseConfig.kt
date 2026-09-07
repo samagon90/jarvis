@@ -10,8 +10,8 @@ object SupabaseConfig {
     /** Project URL из Supabase → Settings → API → Project URL. */
     const val URL: String = "https://tzdtmrqbeagvsfnihcgi.supabase.co"
 
-    /** Publishable key (новый формат, заменяет anon). Открыт для приложений. */
-    const val KEY: String = "sb_publishable_2GcqRS06w6x4Xv4TZPhnog_OQ8JqwlY"
+    /** anon public key (JWT, начинается на eyJ…). */
+    const val KEY: String = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR6ZHRtcnFiZWFndnNmbmloY2dpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3NTk3MTAsImV4cCI6MjEwNDMzNTcxMH0.SPozPXtYJFPn3IUKKpYaCscTOTQvkG0azQT10yh6o_Q"
 
     /** Название бакета для фото (создан в Storage). */
     const val BUCKET: String = "repair-photos"
