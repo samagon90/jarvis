@@ -79,11 +79,21 @@ class RepairRepository private constructor(context: Context) {
                     oldToNewClientId[c.id] = created.id
                 }
             }
+            val oldToNewRepairId = HashMap<Long, Long>()
             repairDao.observeAll().first().forEach { r ->
                 if (r.id != 0L) {
                     val newClientId = r.clientId?.let { oldToNewClientId[it] } ?: r.clientId
                     val toPush = if (newClientId == r.clientId) r else r.copy(clientId = newClientId)
-                    SupabaseCloud.createRepair(toPush)
+                    val created = SupabaseCloud.createRepair(toPush)
+                    oldToNewRepairId[r.id] = created.id
+                }
+            }
+            // Финансовые операции переносим с перепривязкой к новым id ремонтов.
+            transactionDao.observeAll().first().forEach { t ->
+                if (t.id != 0L) {
+                    val newRepairId = t.repairId?.let { oldToNewRepairId[it] } ?: t.repairId
+                    val toPush = if (newRepairId == t.repairId) t else t.copy(repairId = newRepairId)
+                    SupabaseCloud.createTransaction(toPush)
                 }
             }
             // Локальный кэш приводим в соответствие с облаком (серверные id).
@@ -95,15 +105,31 @@ class RepairRepository private constructor(context: Context) {
     }
 
     /**
-     * Обновляет локальный кэш ремонтов и клиентов из облака (diff-слияние по id).
+     * Обновляет локальный кэш ремонтов, клиентов и финансов из облака (diff-слияние по id).
      */
     suspend fun refreshCloud() {
         val remoteClients = SupabaseCloud.fetchClients()
         val remoteRepairs = SupabaseCloud.fetchRepairs()
+        val remoteTransactions = SupabaseCloud.fetchTransactions()
         withContext(Dispatchers.IO) {
             diffClients(remoteClients)
             diffRepairs(remoteRepairs, remoteClients.map { it.id }.toSet())
+            diffTransactions(remoteTransactions)
         }
+    }
+
+    private suspend fun diffTransactions(remote: List<Transaction>) {
+        val current = transactionDao.observeAll().first()
+        val curById = current.associateBy { it.id }
+        for (rt in remote) {
+            val cur = curById[rt.id]
+            when {
+                cur == null -> transactionDao.insert(rt)
+                cur != rt -> transactionDao.update(rt)
+            }
+        }
+        val remoteIds = remote.map { it.id }.toSet()
+        current.filter { it.id !in remoteIds }.forEach { transactionDao.delete(it) }
     }
 
     private suspend fun diffClients(remote: List<Client>) {
@@ -120,8 +146,7 @@ class RepairRepository private constructor(context: Context) {
         current.filter { it.id !in remoteIds }.forEach { clientDao.delete(it) }
     }
 
-    private suspend fun diffRepairs(remote: List<Repair>, remoteClientIds: Set<Long>) {
-        val current = repairDao.observeAll().first()
+    private suspend fun diffRepairs(remote: List<Repair>, remoteClientIds: Set<Long>) {        val current = repairDao.observeAll().first()
         val curById = current.associateBy { it.id }
         for (raw in remote) {
             // Если клиент удалён и в облаке ремонт остался со ссылкой на него — снимаем ссылку,
@@ -264,27 +289,68 @@ class RepairRepository private constructor(context: Context) {
         }
     }
 
-    /** Выдаёт ремонт: статус и оплата в облаке, проводка по деньгам — локально. */
-    suspend fun issueRepair(repair: Repair, received: Double) {
+    /**
+     * Закрывает ремонт (выдача клиенту) и приходует полученную сумму.
+     * [received] — сколько клиент реально заплатил; остаток остаётся долгом.
+     * Возвращает true, если запись в облако прошла успешно.
+     */
+    suspend fun issueRepair(repair: Repair, received: Double): Boolean {
         val receivedSum = received.coerceIn(0.0, repair.price)
         val updated = repair.copy(
             status = RepairStatus.ISSUED.name,
             issuedDate = System.currentTimeMillis(),
             receivedPayment = receivedSum
         )
-        safeCloud(Unit, CLOUD_SAVE_REPAIR_MSG) {
+        val ok = safeCloud(false, CLOUD_SAVE_REPAIR_MSG) {
             SupabaseCloud.updateRepair(updated)
             repairDao.update(updated)
-            transactionDao.insert(
+            true
+        }
+        if (ok) recordIncome(receivedSum, repair.id, "Оплата ремонта: ${repair.deviceName}")
+        return ok
+    }
+
+    /**
+     * Принимает доплату по уже выданному ремонту (гасит долг).
+     * Возвращает true, если запись в облако прошла успешно.
+     */
+    suspend fun acceptPayment(repair: Repair, amount: Double): Boolean {
+        val left = (repair.price - repair.receivedPayment).coerceAtLeast(0.0)
+        val sum = amount.coerceIn(0.0, left)
+        if (sum <= 0.0) return false
+        val updated = repair.copy(receivedPayment = repair.receivedPayment + sum)
+        val ok = safeCloud(false, CLOUD_SAVE_REPAIR_MSG) {
+            SupabaseCloud.updateRepair(updated)
+            repairDao.update(updated)
+            true
+        }
+        if (ok) recordIncome(sum, repair.id, "Доплата по ремонту: ${repair.deviceName}")
+        return ok
+    }
+
+    /**
+     * Приходует деньги: сумма > 0 уходит в облако и в локальный кэш (для отчётов).
+     * Сбой приходования не отменяет закрытие ремонта — о нём сообщаем отдельно.
+     */
+    private suspend fun recordIncome(amount: Double, repairId: Long, description: String) {
+        if (amount <= 0.0) return
+        try {
+            val created = SupabaseCloud.createTransaction(
                 Transaction(
                     type = TransactionType.INCOME.name,
                     category = "Ремонт",
-                    amount = receivedSum,
+                    amount = amount,
                     date = System.currentTimeMillis(),
-                    repairId = repair.id,
-                    description = "Оплата ремонта: ${repair.deviceName}"
+                    repairId = repairId,
+                    description = description
                 )
             )
+            transactionDao.insert(created)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("RepairRepository", "recordIncome: ${e.message}")
+            SyncBus.notify("$CLOUD_SAVE_MONEY_MSG (${cloudReason(e)})")
         }
     }
 
@@ -328,19 +394,29 @@ class RepairRepository private constructor(context: Context) {
     fun observeIncomeBetween(from: Long, to: Long): Flow<Double> = transactionDao.incomeBetween(from, to)
     fun observeExpenseBetween(from: Long, to: Long): Flow<Double> = transactionDao.expenseBetween(from, to)
 
+    /** Добавляет расход в облако и в локальный кэш. */
     suspend fun addExpense(category: String, amount: Double, description: String) {
-        transactionDao.insert(
-            Transaction(
-                type = TransactionType.EXPENSE.name,
-                category = category,
-                amount = amount,
-                date = System.currentTimeMillis(),
-                description = description
+        safeCloud(Unit, CLOUD_SAVE_MONEY_MSG) {
+            val created = SupabaseCloud.createTransaction(
+                Transaction(
+                    type = TransactionType.EXPENSE.name,
+                    category = category,
+                    amount = amount,
+                    date = System.currentTimeMillis(),
+                    description = description
+                )
             )
-        )
+            transactionDao.insert(created)
+        }
     }
 
-    suspend fun deleteTransaction(transaction: Transaction) = transactionDao.delete(transaction)
+    /** Удаляет финансовую операцию в облаке и локально. */
+    suspend fun deleteTransaction(transaction: Transaction) {
+        safeCloud(Unit, CLOUD_DELETE_MONEY_MSG) {
+            SupabaseCloud.deleteTransaction(transaction.id)
+            transactionDao.delete(transaction)
+        }
+    }
 
     fun observeDaily(from: Long, to: Long): Flow<List<DailyAggregate>> = transactionDao.dailyAggregates(from, to)
 
@@ -394,6 +470,8 @@ class RepairRepository private constructor(context: Context) {
         private const val CLOUD_DELETE_CLIENT_MSG = "Не удалось удалить клиента — нет связи с облаком"
         private const val CLOUD_SAVE_REPAIR_MSG = "Не удалось сохранить ремонт — нет связи с облаком"
         private const val CLOUD_DELETE_REPAIR_MSG = "Не удалось удалить ремонт — нет связи с облаком"
+        private const val CLOUD_SAVE_MONEY_MSG = "Не удалось сохранить операцию — нет связи с облаком"
+        private const val CLOUD_DELETE_MONEY_MSG = "Не удалось удалить операцию — нет связи с облаком"
 
         @Volatile
         private var INSTANCE: RepairRepository? = null

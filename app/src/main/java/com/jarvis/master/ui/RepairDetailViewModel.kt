@@ -4,6 +4,8 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jarvis.master.data.RepairRepository
+import com.jarvis.master.data.SyncBus
+import com.jarvis.master.util.Formatters
 import com.jarvis.master.data.db.Client
 import com.jarvis.master.data.db.Repair
 import com.jarvis.master.data.db.RepairPart
@@ -45,9 +47,26 @@ class RepairDetailViewModel(
         }
     }
 
+    /** Закрывает ремонт с указанной полученной суммой (0 — в долг). */
     fun issue(received: Double) {
         viewModelScope.launch {
-            uiState.value.repair?.let { repository.issueRepair(it, received) }
+            val r = uiState.value.repair ?: return@launch
+            val ok = repository.issueRepair(r, received)
+            if (ok) {
+                SyncBus.notify(
+                    if (received > 0) "Ремонт закрыт. Приход: ${Formatters.money(received)}"
+                    else "Ремонт закрыт в долг: ${Formatters.money(r.price - received)}"
+                )
+            }
+        }
+    }
+
+    /** Принимает доплату (гасит долг) по выданному ремонту. */
+    fun acceptPayment(amount: Double) {
+        viewModelScope.launch {
+            val r = uiState.value.repair ?: return@launch
+            val ok = repository.acceptPayment(r, amount)
+            if (ok) SyncBus.notify("Принята оплата: ${Formatters.money(amount)}")
         }
     }
 

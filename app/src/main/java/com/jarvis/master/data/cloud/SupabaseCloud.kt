@@ -2,6 +2,7 @@ package com.jarvis.master.data.cloud
 
 import com.jarvis.master.data.db.Client
 import com.jarvis.master.data.db.Repair
+import com.jarvis.master.data.db.Transaction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -46,6 +47,18 @@ object SupabaseCloud {
 
     suspend fun deleteRepair(id: Long) {
         onIo { CloudHttp.delete(SupabaseConfig.TABLE_REPAIRS, CloudHttp.eq("id", id)) }
+    }
+
+    // ============================= Финансы =============================
+
+    suspend fun fetchTransactions(): List<Transaction> =
+        onIo { decodeList<Transaction>(CloudHttp.select(SupabaseConfig.TABLE_TRANSACTIONS)) }
+
+    suspend fun createTransaction(tx: Transaction): Transaction =
+        onIo { insertOne(SupabaseConfig.TABLE_TRANSACTIONS, tx) }
+
+    suspend fun deleteTransaction(id: Long) {
+        onIo { CloudHttp.delete(SupabaseConfig.TABLE_TRANSACTIONS, CloudHttp.eq("id", id)) }
     }
 }
 

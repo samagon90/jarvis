@@ -32,6 +32,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
@@ -74,6 +76,7 @@ fun RepairDetailScreen(
     val client = state.client
 
     var showIssueDialog by remember { mutableStateOf(false) }
+    var showPaymentDialog by remember { mutableStateOf(false) }
 
     // Пикер фото из галереи
     val context = LocalContext.current
@@ -169,6 +172,10 @@ fun RepairDetailScreen(
                     OutlinedButton(onClick = { viewModel.markReady() }, modifier = Modifier.fillMaxWidth()) {
                         Text("Отметить готовым")
                     }
+                    OutlinedButton(
+                        onClick = { showIssueDialog = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Закрыть ремонт и принять оплату") }
                 }
                 RepairStatus.READY -> {
                     Button(
@@ -177,7 +184,16 @@ fun RepairDetailScreen(
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) { Text("Выдать клиенту и принять оплату") }
                 }
-                else -> { /* завершённые заказы */ }
+                RepairStatus.ISSUED -> {
+                    if (repair.debt > 0) {
+                        Button(
+                            onClick = { showPaymentDialog = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) { Text("Принять оплату · долг ${Formatters.money(repair.debt)}") }
+                    }
+                }
+                else -> { /* отменённые заказы */ }
             }
 
             if (repair.statusEnum == RepairStatus.ISSUED && repair.issuedDate != null) {
@@ -192,31 +208,95 @@ fun RepairDetailScreen(
 
     if (showIssueDialog) {
         val r = repair
-        var received by remember(r?.id) { mutableStateOf((r?.price ?: 0.0).toString()) }
+        val price = r?.price ?: 0.0
+        var mode by remember(r?.id) { mutableStateOf(PayMode.PAID) }
+        var partial by remember(r?.id) { mutableStateOf("") }
+        val received = when (mode) {
+            PayMode.PAID -> price
+            PayMode.DEBT -> 0.0
+            PayMode.PARTIAL -> (partial.toDoubleOrNull() ?: 0.0).coerceIn(0.0, price)
+        }
         AlertDialog(
             onDismissRequest = { showIssueDialog = false },
-            title = { Text("Выдать устройство") },
+            title = { Text("Закрыть ремонт") },
             text = {
-                Column {
-                    Text("Введите полученную сумму (макс. ${r?.price ?: 0.0} ₽):")
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Сумма к оплате: ${Formatters.money(price)}")
+
+                    PayOptionRow("Оплачено полностью", mode == PayMode.PAID) { mode = PayMode.PAID }
+                    PayOptionRow("Частично оплачено", mode == PayMode.PARTIAL) { mode = PayMode.PARTIAL }
+                    if (mode == PayMode.PARTIAL) {
+                        OutlinedTextField(
+                            value = partial,
+                            onValueChange = { partial = it.filter { c -> c.isDigit() || c == '.' } },
+                            label = { Text("Получено, ₽") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                        )
+                    }
+                    PayOptionRow("В долг (не оплачено)", mode == PayMode.DEBT) { mode = PayMode.DEBT }
+
+                    Text(
+                        "Приход: ${Formatters.money(received)}   ·   Долг: ${Formatters.money((price - received).coerceAtLeast(0.0))}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.issue(received)
+                    showIssueDialog = false
+                }) { Text("Закрыть ремонт") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showIssueDialog = false }) { Text("Отмена") }
+            }
+        )
+    }
+
+    if (showPaymentDialog) {
+        val r = repair
+        val left = ((r?.price ?: 0.0) - (r?.receivedPayment ?: 0.0)).coerceAtLeast(0.0)
+        var amount by remember(r?.id) { mutableStateOf(left.toString()) }
+        AlertDialog(
+            onDismissRequest = { showPaymentDialog = false },
+            title = { Text("Принять оплату") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Остаток долга: ${Formatters.money(left)}")
                     OutlinedTextField(
-                        value = received,
-                        onValueChange = { received = it.filter { c -> c.isDigit() || c == '.' } },
+                        value = amount,
+                        onValueChange = { amount = it.filter { c -> c.isDigit() || c == '.' } },
+                        label = { Text("Получено, ₽") },
                         singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                     )
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.issue(received.toDoubleOrNull() ?: 0.0)
-                    showIssueDialog = false
-                }) { Text("Выдать") }
+                    viewModel.acceptPayment(amount.toDoubleOrNull() ?: 0.0)
+                    showPaymentDialog = false
+                }) { Text("Принять") }
             },
             dismissButton = {
-                TextButton(onClick = { showIssueDialog = false }) { Text("Отмена") }
+                TextButton(onClick = { showPaymentDialog = false }) { Text("Отмена") }
             }
         )
+    }
+}
+
+/** Вариант оплаты при закрытии ремонта. */
+private enum class PayMode { PAID, PARTIAL, DEBT }
+
+@Composable
+private fun PayOptionRow(label: String, selected: Boolean, onSelect: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        RadioButton(selected = selected, onClick = onSelect)
+        Text(label)
     }
 }
 
